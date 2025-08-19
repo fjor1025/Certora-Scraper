@@ -1,15 +1,29 @@
 {
   "name": "certora-scraper",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "scripts/certora_auto_server.mjs",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node scripts/certora_auto_server.mjs",
+    "start:headful": "PWDEBUG=1 node scripts/certora_auto_server.mjs",
+    "playwright:install": "npx playwright install --with-deps",
+    "open:ui": "xdg-open certora_analyzer.html || open certora_analyzer.html || start certora_analyzer.html",
+    "dev": "npm run start",
+    "lint": "eslint . --ext .js,.mjs --max-warnings=0",
+    "lint:fix": "eslint . --ext .js,.mjs --fix",
+    "health": "node -e \"import('node-fetch').then(()=>fetch('http://localhost:3002/health').then(r=>r.json()).then(j=>{console.log(j);process.exit(0);}).catch(e=>{console.error(e);process.exit(1);}))\"",
+    "ci": "node scripts/certora_auto_server.mjs & SERVER_PID=$!; sleep 3; npm run health; kill $SERVER_PID || true",
+    "test": "echo \"No tests yet\""
   },
-  "keywords": [],
+  "keywords": ["certora","playwright","sse","analysis","automation"],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Certora Prover results scraper + Codex assisted analysis & auto-fix UI",
   "devDependencies": {
+    "eslint": "^9.9.0",
+    "eslint-config-standard": "^17.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-n": "^17.9.0",
+    "eslint-plugin-promise": "^6.4.0",
     "playwright": "^1.54.2"
   },
   "dependencies": {

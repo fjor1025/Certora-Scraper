@@ -31,7 +31,9 @@ Certora Scraper simplifies and automates the Certora Prover verification process
 ## Installation & Setup
 
 ### Prerequisites
-- Codex (npm i -g @openai/codex)
+- Node.js 20 (see `.nvmrc`)
+- Playwright browsers (installed via script)
+- Optional: Codex CLI for AI analysis (`npm i -g @openai/codex`) and `OPENAI_API_KEY` env var
 
 ### Installation
 
@@ -40,15 +42,26 @@ Certora Scraper simplifies and automates the Certora Prover verification process
    npm install
    ```
 
-2. **Start the Backend Service**
+2. **Install Playwright Browsers (first time)**
    ```bash
-   node scripts/certora_auto_server.mjs
+   npm run playwright:install
    ```
-   This launches the backend API server that handles scraping, analysis, and repair operations.
 
-3. **Open the Web Interface**
-   - Open `certora_analyzer.html` in your web browser
-   - The interface provides all tools needed for verification management
+3. **Start the Backend Service**
+   ```bash
+   npm start
+   ```
+   Server runs at: http://localhost:3002
+
+4. **Open the Web Interface**
+   - Visit http://localhost:3002/  (served directly by the server), or
+   - Open `certora_analyzer.html` file in a browser.
+
+5. **(Optional) Enable AI Analysis**
+   ```bash
+   export OPENAI_API_KEY=sk-...    # Your key
+   npm i -g @openai/codex          # If not installed
+   ```
 
 ## Usage Guide
 
@@ -97,6 +110,11 @@ The backend service exposes several REST endpoints for programmatic access:
 | `/fix-sequential-stream` | POST | Execute sequential repair workflow (SSE) |
 | `/kill-processes` | POST | Terminate all running processes |
 | `/list-conf` | GET | List available `.conf` files (`?projectPath=<absolute_path>`) |
+| `/health` | GET | Basic health/uptime check |
+| `/resume-state` | GET | Current sequential fix resume info |
+
+### Run Without API Key
+You can still scrape & generate markdown (the analyze/fix Codex features will simply not work). Don’t click Codex buttons if no key.
 
 ## Project Structure
 
@@ -126,3 +144,39 @@ certora-scraper/
 | **Configuration dropdown empty** | Ensure `<workdir>/certora/conf` exists and contains `.conf` files. Click "Refresh" button. |
 | **Analysis fails to start** | Check that the backend service is running and the Certora URL is valid and accessible. |
 | **Analysis results take too long to appear** | Try manually stopping the current analysis using the "Stop" button, then restart the analysis process. This can resolve stuck or slow analysis tasks. |
+| **Port already in use (3002)** | Stop previous server (`Ctrl+C` in terminal) or kill with `lsof -t -i:3002 | xargs -r kill`. |
+| **No browser pops up** | UI is now served at http://localhost:3002/. Open manually if auto open failed. |
+| **Codex errors / missing key** | Set `OPENAI_API_KEY` env var and ensure `@openai/codex` CLI installed. |
+| **Playwright missing deps** | Re-run: `npm run playwright:install` (installs system dependencies). |
+
+## VS Code Integration
+
+- Tasks (see `.vscode/tasks.json`):
+   - "Analyzer: Start Backend" – starts server
+   - "Analyzer: Open UI" – attempts to open HTML file (may require a GUI browser)
+   - "Analyzer: Full Workflow" – sequential start + open
+   - "Analyzer: Start (Headful)" – Playwright debug mode
+- Launch configurations (F5) for running the server (headless/headful).
+
+## Scripts Summary
+
+| Script | Purpose |
+| ------ | ------- |
+| `npm start` | Launch server (serves UI) |
+| `npm run start:headful` | Launch with Playwright debug (PWDEBUG=1) |
+| `npm run playwright:install` | Install Playwright browsers + system deps |
+| `npm run open:ui` | Try to open UI file directly (fallback chain) |
+| `npm run health` | Fetch `/health` endpoint (requires running server) |
+| `npm run ci` | CI smoke: start server, health check, stop |
+
+## Continuous Integration
+
+GitHub Actions workflow `.github/workflows/ci.yml` performs:
+1. Checkout & Node 20 setup
+2. `npm install`
+3. Playwright browser install
+4. Server smoke health check
+
+## License
+
+ISC

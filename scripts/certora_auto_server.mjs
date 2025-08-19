@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2025 Nala.
+ * Credits: pixelPANDA | 胖达 for prior contributions and inspiration.
+ * License: ISC (see root LICENSE file).
+ */
 import { chromium } from 'playwright';
 import express from 'express';
 import cors from 'cors';
@@ -1195,3 +1200,20 @@ app.get('/resume-state', async (req, res) => {
         } : null
     });
 });
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime() });
+});
+
+// Static hosting for the analyzer UI (serves project root)
+try {
+    const projectRoot = process.cwd();
+    app.use(express.static(projectRoot));
+    app.get('/', (req, res) => {
+        res.sendFile(path.join(projectRoot, 'certora_analyzer.html'));
+    });
+    console.log('Static UI available at / (serving certora_analyzer.html)');
+} catch (e) {
+    console.warn('Failed to set up static UI hosting:', e.message);
+}
