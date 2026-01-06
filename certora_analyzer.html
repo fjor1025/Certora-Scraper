@@ -603,6 +603,17 @@
                 <button class="btn btn-primary" id="analyzeBtn" onclick="analyzeUrl()">
                     🔍 Get verification data
                 </button>
+                <label style="margin-left:12px; display:inline-flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="include-satisfied-checkbox" />
+                    <small style="color:#6c757d;">Fetch traces for non-VERIFIED rules</small>
+                </label>
+                <label style="margin-left:12px; display:inline-flex; align-items:center; gap:8px;">
+                    <input type="checkbox" id="include-all-checkbox" />
+                    <small style="color:#6c757d;">Include VERIFIED rules as well</small>
+                </label>
+                <label style="margin-left:12px; display:inline-flex; align-items:center; gap:8px;">
+                    <input type="text" id="include-rule-match" placeholder="Include rule substring (e.g. Satisfy_lastReverted)" style="padding:6px; font-family: monospace;" />
+                </label>
                 <script>
                     // Try to initialize conf dropdown based on default project path after page load
                     window.addEventListener('DOMContentLoaded', () => {
@@ -848,12 +859,15 @@
 
             try {
                 // Call local service
+                const includeSatisfied = document.getElementById('include-satisfied-checkbox')?.checked;
+                const includeAll = document.getElementById('include-all-checkbox')?.checked;
+                const includeRuleMatch = document.getElementById('include-rule-match')?.value || null;
                 const response = await fetch('http://localhost:3002/analyze-and-fetch', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ url })
+                    body: JSON.stringify({ url, includeSatisfied, includeRuleMatch, includeAll })
                 });
 
                 if (!response.ok) {
@@ -886,14 +900,23 @@
         function processData(data) {
             processedRules = [];
 
-            // Process VIOLATED rules
-            data.rules.filter(r => r.status === 'VIOLATED').forEach(rule => {
+            // Process all returned rules (show VIOLATED, SANITY_FAILED, VERIFIED, etc.)
+            data.rules.forEach((rule, idx) => {
+                const status = (rule.status || '').toUpperCase() || 'UNKNOWN';
                 const markdown = rule.content ? convertToMarkdown(rule) : '';
+                // Normalize outputFile to a safe id for DOM elements; if missing, create a synthetic id
+                const originalOutput = rule.outputFile || rule.output || null;
+                const baseId = originalOutput ? String(originalOutput) : `rule_${idx}`;
+                const safeOutput = baseId.replace(/[^a-zA-Z0-9_\-]/g, '_');
+
                 processedRules.push({
                     ...rule,
-                    type: 'VIOLATED',
+                    type: status,
+                    status: status,
                     markdown: markdown,
-                    displayName: rule.ruleName
+                    displayName: rule.ruleName || rule.ruleName || safeOutput,
+                    outputFile: safeOutput,
+                    __originalOutputFile: originalOutput
                 });
             });
 
@@ -981,6 +1004,22 @@
                     </td>
                 `;
                 tbody.appendChild(row);
+
+                // Populate textarea with fetched content (if any)
+                setTimeout(() => {
+                    try {
+                        const ta = document.getElementById(`analysis-${rule.outputFile}`);
+                        if (ta && (rule.content || rule.markdown)) {
+                            if (typeof rule.content === 'object') {
+                                ta.value = JSON.stringify(rule.content, null, 2);
+                            } else if (rule.content) {
+                                ta.value = String(rule.content);
+                            } else if (rule.markdown) {
+                                ta.value = rule.markdown;
+                            }
+                        }
+                    } catch (e) { console.error('Populate textarea error', e); }
+                }, 10);
             });
 
             document.getElementById('result-section').style.display = 'block';
@@ -1296,6 +1335,7 @@
             batchBtn.className = 'btn btn-danger';
             batchBtn.innerHTML = '⏹️ Stop Analysis';
 
+            const includeSatisfied = document.getElementById('include-satisfied-checkbox')?.checked;
             showStatus('Starting batch analysis...', 'info');
 
             // Start all analyses concurrently

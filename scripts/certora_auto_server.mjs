@@ -154,7 +154,7 @@ function getProgressRoots(progressJson) {
     return roots;
 }
 
-function collectFailedRuleOutputs(node, runInfo, results = [], currentPath = []) {
+function collectFailedRuleOutputs(node, runInfo, results = [], currentPath = [], opts = {}) {
     if (!node) return results;
 
     const name = node.name || '';
@@ -166,10 +166,23 @@ function collectFailedRuleOutputs(node, runInfo, results = [], currentPath = [])
     // Original logic: collect all non-VERIFIED rules
     // if (status && status !== 'VERIFIED' && output.length > 0) {
 
-    // New logic: only collect VIOLATED and SANITY_FAILED rules
-    if (status && (status === 'VIOLATED' || status === 'SANITY_FAILED') && output.length > 0) {
+    // Default behavior: collect VIOLATED and SANITY_FAILED rules only
+    // If opts.includeSatisfied is true, collect any rule that is not VERIFIED and has output
+    const includeSatisfied = Boolean(opts.includeSatisfied);
+    const includeAll = Boolean(opts.includeAll);
+    const includeRuleMatch = typeof opts.includeRuleMatch === 'string' && opts.includeRuleMatch.trim() ? opts.includeRuleMatch.trim().toLowerCase() : null;
+    // If includeRuleMatch is provided and the rule path contains the match, include it regardless of status
+    const rulePathLower = nextPath.join(' > ').toLowerCase();
+    const matchesName = includeRuleMatch && rulePathLower.includes(includeRuleMatch);
+
+    if (status && output.length > 0 && (
+        matchesName ||
+        includeAll ||
+        (includeSatisfied && status !== 'VERIFIED') ||
+        (!includeSatisfied && (status === 'VIOLATED' || status === 'SANITY_FAILED'))
+    )) {
         for (const outputFile of output) {
-            if (typeof outputFile === 'string' && /^rule_output_\d+\.json$/.test(outputFile)) {
+            if (typeof outputFile === 'string' && /\.json$/i.test(outputFile)) {
                 const baseUrl = `${runInfo.origin}/result/${runInfo.runId}/${runInfo.outputId}`;
                 const params = new URLSearchParams();
                 if (runInfo.anonymousKey) {
@@ -186,10 +199,21 @@ function collectFailedRuleOutputs(node, runInfo, results = [], currentPath = [])
                 });
             }
         }
+    } else if (includeSatisfied && status && output.length === 0 && status !== 'VERIFIED') {
+        // No per-rule output file, but user asked to include satisfied/non-verified rules.
+        // Preserve a small snapshot of the node so we can extract inline traces if present.
+        const nodeSnapshot = { name: node.name, status, ...('message' in node ? { message: node.message } : {}), ...('counterExample' in node ? { counterExample: node.counterExample } : {}), ...('counterexample' in node ? { counterexample: node.counterexample } : {}), ...('trace' in node ? { trace: node.trace } : {}), ...('callTrace' in node ? { callTrace: node.callTrace } : {}) };
+        results.push({
+            ruleName: nextPath.join(' > '),
+            status: status,
+            outputFile: null,
+            url: null,
+            nodeSnapshot
+        });
     }
 
     for (const child of children) {
-        collectFailedRuleOutputs(child, runInfo, results, nextPath);
+        collectFailedRuleOutputs(child, runInfo, results, nextPath, opts);
     }
 
     return results;
@@ -197,7 +221,7 @@ function collectFailedRuleOutputs(node, runInfo, results = [], currentPath = [])
 
 // Main endpoint: analyze URL and return all JSON content (with real-time progress)
 app.post('/analyze-and-fetch-stream', async (req, res) => {
-    const { url } = req.body;
+    const { url, includeSatisfied, includeRuleMatch, includeAll } = req.body || {};
 
     if (!url) {
         return res.status(400).json({ error: 'Please provide URL' });
@@ -264,13 +288,26 @@ app.post('/analyze-and-fetch-stream', async (req, res) => {
         }
 
         // Correctly pass empty array as path accumulator to avoid string concat/join errors
-        const failedRules = collectFailedRuleOutputs(progressData, runInfo, [], []);
-        sendProgress(`Found ${failedRules.length} rules to analyze (VIOLATED and SANITY_FAILED), fetching JSON content...`);
+    const failedRules = collectFailedRuleOutputs(progressData, runInfo, [], [], { includeSatisfied, includeRuleMatch, includeAll });
+    sendProgress(`Found ${failedRules.length} rules to analyze (filtered by includeSatisfied=${Boolean(includeSatisfied)}), fetching JSON content...`);
 
         const results = [];
         for (const rule of failedRules) {
             try {
-                sendProgress(`Fetching ${rule.outputFile}...`);
+                // If we have an inline node snapshot (no per-rule URL), prefer extracting inline trace fields
+                if (!rule.url && rule.nodeSnapshot) {
+                    sendProgress(`Using inline snapshot for ${rule.ruleName}`, 'info');
+                    const snap = rule.nodeSnapshot;
+                    const inline = snap.counterExample || snap.counterexample || snap.trace || snap.callTrace || snap.message || null;
+                    results.push({ ...rule, content: inline });
+                    continue;
+                }
+                if (!rule.url) {
+                    sendProgress(`No URL for ${rule.ruleName}, skipping`, 'warning');
+                    results.push({ ...rule, content: null, error: 'no url' });
+                    continue;
+                }
+                sendProgress(`Fetching ${rule.outputFile || rule.url}...`);
                 // Use node-fetch to directly request the constructed JSON URL (field name is url)
                 const resp = await fetch(rule.url);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -305,7 +342,7 @@ app.post('/analyze-and-fetch-stream', async (req, res) => {
 
 // Main endpoint: analyze URL and return all JSON content
 app.post('/analyze-and-fetch', async (req, res) => {
-    const { url } = req.body;
+    const { url, includeSatisfied, includeRuleMatch, includeAll } = req.body || {};
 
     if (!url) {
         return res.status(400).json({ error: 'Please provide URL' });
@@ -358,7 +395,7 @@ app.post('/analyze-and-fetch', async (req, res) => {
         const failedRules = [];
 
         for (const root of roots) {
-            collectFailedRuleOutputs(root, runInfo, failedRules);
+            collectFailedRuleOutputs(root, runInfo, failedRules, [], { includeSatisfied, includeRuleMatch, includeAll });
         }
 
         // Deduplicate
@@ -406,7 +443,16 @@ app.post('/analyze-and-fetch', async (req, res) => {
         };
 
         // Concurrently fetch all JSON file contents (each has its own infinite retry)
-        const rulesWithContent = await Promise.all(sortedRules.map(rule => fetchJsonWithRetry(rule)));
+        // For rules that include nodeSnapshot, fetchJsonWithRetry will still try network; intercept early
+        const rulesWithContent = await Promise.all(sortedRules.map(async (rule) => {
+            if (!rule.url && rule.nodeSnapshot) {
+                // extract inline
+                const snap = rule.nodeSnapshot;
+                const inline = snap.counterExample || snap.counterexample || snap.trace || snap.callTrace || snap.message || null;
+                return { ...rule, content: inline };
+            }
+            return fetchJsonWithRetry(rule);
+        }));
 
         // Return complete results
         res.json({
@@ -421,6 +467,67 @@ app.post('/analyze-and-fetch', async (req, res) => {
         console.error('Analysis error:', error);
         await browser.close();
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Debug endpoint: inspect progress JSON structure (names, statuses, outputs) without fetching files
+app.post('/inspect-progress', async (req, res) => {
+    const { url } = req.body || {};
+    if (!url) return res.status(400).json({ success: false, error: 'Missing url' });
+
+    try {
+        const runInfo = parseRunInfo(url);
+        const browser = await chromium.launch({ headless: true });
+        const context = await browser.newContext();
+        const page = await context.newPage();
+
+        let progressData = null;
+        page.on('response', async (response) => {
+            try {
+                const resUrl = response.url();
+                const status = response.status();
+                if (status === 200 && (resUrl.includes('progress') || resUrl.includes(runInfo.outputId))) {
+                    const body = await response.text();
+                    try {
+                        const json = JSON.parse(body);
+                        if (json) progressData = json;
+                    } catch { }
+                }
+            } catch { }
+        });
+
+        await page.goto(url, { waitUntil: 'networkidle' });
+        await page.waitForTimeout(1500);
+        await browser.close();
+
+    if (!progressData) return res.status(404).json({ success: false, error: 'progress data not found' });
+
+    const roots = getProgressRoots(progressData);
+        const flatten = [];
+        const walk = (node, path = []) => {
+            if (!node) return;
+            const name = node.name || '';
+            const status = (node.status || '').toUpperCase();
+            const output = Array.isArray(node.output) ? node.output : [];
+            flatten.push({ path: path.concat(name).filter(Boolean).join(' > '), name, status, output });
+            const children = Array.isArray(node.children) ? node.children : [];
+            for (const c of children) walk(c, path.concat(name));
+        };
+        for (const r of roots) walk(r, []);
+
+        // Include a truncated raw snapshot for debugging (first 2000 chars)
+        let rawSnapshot = null;
+        try {
+            rawSnapshot = JSON.stringify(progressData);
+            if (rawSnapshot.length > 20000) rawSnapshot = rawSnapshot.slice(0, 20000) + '...<truncated>';
+        } catch (e) {
+            rawSnapshot = String(progressData).slice(0, 20000) + '...';
+        }
+
+        return res.json({ success: true, runInfo, nodes: flatten, progressSnapshot: rawSnapshot });
+    } catch (e) {
+        console.error('inspect-progress error:', e);
+        return res.status(500).json({ success: false, error: e.message });
     }
 });
 
