@@ -370,6 +370,33 @@
             transform: translateY(0);
         }
 
+        .save-btn {
+            background: linear-gradient(135deg, #6f42c1 0%, #5a32a3 100%);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-left: 8px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(111, 66, 193, 0.3);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .save-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(111, 66, 193, 0.4);
+            background: linear-gradient(135deg, #5a32a3 0%, #4a2883 100%);
+        }
+
+        .save-btn:active {
+            transform: translateY(0);
+        }
+
         .view-btn {
             background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
             color: white;
@@ -973,6 +1000,9 @@
                             </button>
                             <button class="copy-btn" onclick="copyMarkdown(${index})">
                                 📋 Copy
+                            </button>
+                            <button class="save-btn" onclick="saveMarkdown(${index})">
+                                💾 Save
                             </button>
                         </div>
                     </td>
@@ -2314,6 +2344,24 @@
                 });
             } else {
                 showCopyNotification('❌ No Markdown content to copy');
+            }
+        }
+
+        function saveMarkdown(index) {
+            const rule = processedRules[index];
+            if (rule && rule.markdown) {
+                const blob = new Blob([rule.markdown], { type: 'text/markdown;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${rule.displayName.replace(/[^a-zA-Z0-9]/g, '_')}.md`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showCopyNotification('✅ Markdown file saved');
+            } else {
+                showCopyNotification('❌ No Markdown content to save');
             }
         }
 
