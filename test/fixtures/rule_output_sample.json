@@ -1,0 +1,172 @@
+{
+  "treeViewPath": "validation_pendingDepositRequest_canIncrease-sanity-fulfillDeposit",
+  "assertMessage": "Assert violated: pendingDepositRequest must increase when fulfillDeposit is called",
+  "assertionBreakdown": {
+    "condition": "pendingAfter > pendingBefore",
+    "pendingBefore": "0",
+    "pendingAfter": "0"
+  },
+  "callTrace": {
+    "message": {
+      "text": "Rule: validation_pendingDepositRequest_canIncrease",
+      "arguments": []
+    },
+    "status": "VIOLATED",
+    "returnValue": null,
+    "reverted": false,
+    "isView": false,
+    "childrenList": [
+      {
+        "message": {
+          "text": "Global State",
+          "arguments": []
+        },
+        "childrenList": [
+          {
+            "message": {
+              "text": "vault.totalAssets(): {0}",
+              "arguments": [
+                {
+                  "value": "0x00000000000000000000000000000000000000000000000000000000000f4240",
+                  "values": ["0x00000000000000000000000000000000000000000000000000000000000f4240", "1000000"]
+                }
+              ]
+            },
+            "childrenList": []
+          },
+          {
+            "message": {
+              "text": "vault.balanceOf(user): {0}",
+              "arguments": [
+                {
+                  "value": "0x0000000000000000000000000000000000000000000000000000000000000064",
+                  "values": ["0x0000000000000000000000000000000000000000000000000000000000000064", "100"]
+                }
+              ]
+            },
+            "childrenList": []
+          }
+        ]
+      },
+      {
+        "message": {
+          "text": "fulfillDeposit(address,uint256)",
+          "arguments": []
+        },
+        "returnValue": "true",
+        "reverted": false,
+        "isView": false,
+        "isStaticCall": false,
+        "delegateCall": false,
+        "childrenList": [
+          {
+            "message": {
+              "text": "vault._mint(to, shares): {0}",
+              "arguments": [
+                {
+                  "value": "50",
+                  "values": ["50", "0x32"]
+                }
+              ]
+            },
+            "returnValue": "50",
+            "childrenList": []
+          }
+        ]
+      },
+      {
+        "message": {
+          "text": "Global State",
+          "arguments": []
+        },
+        "childrenList": [
+          {
+            "message": {
+              "text": "vault.totalAssets(): {0}",
+              "arguments": [
+                {
+                  "value": "0x00000000000000000000000000000000000000000000000000000000001e8480",
+                  "values": ["0x00000000000000000000000000000000000000000000000000000000001e8480", "2000000"]
+                }
+              ]
+            },
+            "childrenList": []
+          },
+          {
+            "message": {
+              "text": "vault.balanceOf(user): {0}",
+              "arguments": [
+                {
+                  "value": "0x0000000000000000000000000000000000000000000000000000000000000096",
+                  "values": ["0x0000000000000000000000000000000000000000000000000000000000000096", "150"]
+                }
+              ]
+            },
+            "childrenList": []
+          }
+        ]
+      }
+    ]
+  },
+  "variables": [
+    {
+      "variableName": "e",
+      "childrenList": [
+        {
+          "variableName": "msg",
+          "childrenList": [
+            {
+              "variableName": "sender",
+              "value": "0x1234567890abcdef1234567890abcdef12345678",
+              "type": "address",
+              "isHavoc": false
+            },
+            {
+              "variableName": "value",
+              "value": "0",
+              "type": "uint256",
+              "isHavoc": true,
+              "rawValue": "0x0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "variableName": "depositAmount",
+      "value": "1000000000000000000",
+      "type": "uint256",
+      "isHavoc": false,
+      "values": ["1000000000000000000", "0xde0b6b3a7640000"]
+    }
+  ],
+  "callResolutionWarnings": [
+    {
+      "caller": {
+        "name": "fulfillDeposit",
+        "contractName": "VaultHarness"
+      },
+      "callee": {
+        "name": "previewDeposit",
+        "contractName": "ERC4626"
+      },
+      "resolution": "HAVOC_ALL",
+      "isCallback": false,
+      "resolvedTo": {
+        "contract": "ERC4626",
+        "method": "previewDeposit(uint256)"
+      },
+      "summary": "The call to previewDeposit was summarized as HAVOC_ALL",
+      "callSite": {
+        "snippet": "shares = previewDeposit(assets);",
+        "jumpToDefinition": {
+          "file": "src/ERC4626.sol",
+          "start": { "line": 142, "col": 8 }
+        }
+      },
+      "comments": [
+        { "note": "This may lead to overapproximation" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "verificationProgress": {
+    "rules": [
+      {
+        "name": "validation_pendingDepositRequest_canIncrease",
+        "status": "VIOLATED",
+        "output": ["treeView/rule_output_1.json"],
+        "children": []
+      },
+      {
+        "name": "validation_authEnforcement",
+        "status": "VIOLATED",
+        "output": [],
+        "children": [
+          {
+            "name": "cancelDeposit",
+            "status": "VIOLATED",
+            "output": ["treeView/rule_output_2.json"],
+            "children": []
+          },
+          {
+            "name": "fulfillDeposit",
+            "status": "VERIFIED",
+            "output": ["treeView/rule_output_3.json"],
+            "children": []
+          }
+        ]
+      },
+      {
+        "name": "sanity_check",
+        "status": "SANITY_FAILED",
+        "output": ["treeView/rule_output_4.json"],
+        "children": []
+      },
+      {
+        "name": "verified_rule",
+        "status": "VERIFIED",
+        "output": ["treeView/rule_output_5.json"],
+        "children": []
+      }
+    ]
+  }
+}

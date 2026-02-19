@@ -9,6 +9,11 @@ import cors from 'cors';
 import fetch from 'node-fetch';
 import fs from 'fs';
 import path from 'path';
+import {
+    parseRunInfo, buildResultBaseUrl, parseMaybeJson,
+    getProgressRoots, collectFailedRuleOutputs,
+    parseJobMetadata, extractCodexAnswer
+} from './helpers.mjs';
 
 const app = express();
 app.use(cors());
@@ -24,51 +29,6 @@ let activeFixRunning = false;
 // Resume mechanism: track current item being processed
 let currentFixIndex = 0;
 let resumeState = null;
-
-// Process Codex output, extract only the final answer
-function extractCodexAnswer(fullOutput) {
-    // Trace back from the last "tokens used:" to find the most recent non-empty candidate block
-    const lines = fullOutput.split('\n');
-    const tokenIdxs = [];
-    for (let i = 0; i < lines.length; i++) {
-        if (/tokens used:/i.test(lines[i])) tokenIdxs.push(i);
-    }
-
-    const isMetaLine = (l) => (
-        /^\[[\d\-T:\.Z]+\]/.test(l) ||
-        /\] (exec|bash -lc|codex|thinking)\b/i.test(l) ||
-        /workdir:|model:|provider:|approval:|sandbox:|reasoning/i.test(l) ||
-        /OpenAI Codex/i.test(l)
-    );
-
-    for (let k = tokenIdxs.length - 1; k >= 0; k--) {
-        const t = tokenIdxs[k];
-        // Find the most recent timestamp line before t
-        let s = -1;
-        for (let i = t - 1; i >= 0; i--) {
-            if (/^\[[\d\-T:\.Z]+\]/.test(lines[i])) { s = i; break; }
-        }
-        const slice = lines.slice(s + 1, t);
-        const filtered = slice.filter(l => !isMetaLine(l)).join('\n').trim();
-        if (filtered) return filtered;
-    }
-
-    // Try to extract from "Final answer:" marker
-    const finalIdx = lines.findIndex(l => /^(Final answer|Final answer)\s*:/i.test(l));
-    if (finalIdx !== -1) {
-        return lines.slice(finalIdx + 1).join('\n').trim();
-    }
-
-    // Fallback: start from the last "User instructions:" and filter obvious system lines
-    let userInstrIdx = -1;
-    for (let i = lines.length - 1; i >= 0; i--) {
-        if (lines[i].includes('User instructions:')) { userInstrIdx = i; break; }
-    }
-    let candidate = (userInstrIdx >= 0 ? lines.slice(userInstrIdx + 1) : lines)
-        .filter(l => !isMetaLine(l) && !/tokens used:/i.test(l))
-        .join('\n').trim();
-    return candidate || fullOutput;
-}
 
 // Filter Codex output, remove prompt echo and system information
 function filterCodexOutput(output) {
@@ -114,109 +74,22 @@ function filterCodexOutput(output) {
     return filteredLines.join('\n');
 }
 
-function parseRunInfo(urlStr) {
-    const u = new URL(urlStr);
-    const parts = u.pathname.split('/').filter(Boolean);
-    let runId, outputId;
-    for (let i = 0; i < parts.length; i++) {
-        if (parts[i] === 'output' && parts[i - 1] !== 'outputs') {
-            runId = parts[i + 1];
-            outputId = parts[i + 2];
-            break;
-        }
+// Fetch the top-level output.json for job metadata (prover time, rule_sanity, etc.)
+async function fetchJobMetadata(runInfo) {
+    try {
+        const baseUrl = buildResultBaseUrl(runInfo);
+        const params = new URLSearchParams();
+        if (runInfo.anonymousKey) params.append('anonymousKey', runInfo.anonymousKey);
+        params.append('output', 'output.json');
+        const url = `${baseUrl}?${params.toString()}`;
+        const resp = await fetch(url);
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        return parseJobMetadata(data);
+    } catch (e) {
+        console.warn('Failed to fetch job metadata (output.json):', e.message);
+        return null;
     }
-    const anonymousKey = u.searchParams.get('anonymousKey') || '';
-    return { origin: `${u.protocol}//${u.host}`, runId, outputId, anonymousKey };
-}
-
-function parseMaybeJson(val) {
-    if (typeof val === 'string') {
-        try { return JSON.parse(val); } catch { return val; }
-    }
-    return val;
-}
-
-function getProgressRoots(progressJson) {
-    const roots = [];
-    if (!progressJson) return roots;
-    const pj = parseMaybeJson(progressJson);
-    if (pj && pj.verificationProgress != null) {
-        const vp = parseMaybeJson(pj.verificationProgress);
-        if (vp) {
-            if (vp.rules) return Array.isArray(vp.rules) ? vp.rules : [vp.rules];
-            if (Array.isArray(vp)) return vp;
-            if (vp.children) return Array.isArray(vp.children) ? vp.children : [vp.children];
-        }
-    }
-    if (pj && pj.rules) return Array.isArray(pj.rules) ? pj.rules : [pj.rules];
-    if (Array.isArray(pj)) return pj;
-    if (pj && pj.children) return Array.isArray(pj.children) ? pj.children : [pj.children];
-    return roots;
-}
-
-function collectFailedRuleOutputs(node, runInfo, results = [], currentPath = [], opts = {}) {
-    if (!node) return results;
-
-    const name = node.name || '';
-    const status = (node.status || '').toUpperCase();
-    const output = Array.isArray(node.output) ? node.output : [];
-    const children = Array.isArray(node.children) ? node.children : [];
-    const nextPath = currentPath.concat(name);
-
-    // Original logic: collect all non-VERIFIED rules
-    // if (status && status !== 'VERIFIED' && output.length > 0) {
-
-    // Default behavior: collect VIOLATED and SANITY_FAILED rules only
-    // If opts.includeSatisfied is true, collect any rule that is not VERIFIED and has output
-    const includeSatisfied = Boolean(opts.includeSatisfied);
-    const includeAll = Boolean(opts.includeAll);
-    const includeRuleMatch = typeof opts.includeRuleMatch === 'string' && opts.includeRuleMatch.trim() ? opts.includeRuleMatch.trim().toLowerCase() : null;
-    // If includeRuleMatch is provided and the rule path contains the match, include it regardless of status
-    const rulePathLower = nextPath.join(' > ').toLowerCase();
-    const matchesName = includeRuleMatch && rulePathLower.includes(includeRuleMatch);
-
-    if (status && output.length > 0 && (
-        matchesName ||
-        includeAll ||
-        (includeSatisfied && status !== 'VERIFIED') ||
-        (!includeSatisfied && (status === 'VIOLATED' || status === 'SANITY_FAILED'))
-    )) {
-        for (const outputFile of output) {
-            if (typeof outputFile === 'string' && /\.json$/i.test(outputFile)) {
-                const baseUrl = `${runInfo.origin}/result/${runInfo.runId}/${runInfo.outputId}`;
-                const params = new URLSearchParams();
-                if (runInfo.anonymousKey) {
-                    params.append('anonymousKey', runInfo.anonymousKey);
-                }
-                params.append('output', outputFile);
-                const fullUrl = `${baseUrl}?${params.toString()}`;
-
-                results.push({
-                    ruleName: nextPath.join(' > '),
-                    status: status,
-                    outputFile: outputFile,
-                    url: fullUrl
-                });
-            }
-        }
-    } else if (includeSatisfied && status && output.length === 0 && status !== 'VERIFIED') {
-        // No per-rule output file, but user asked to include satisfied/non-verified rules.
-        // Preserve a small snapshot of the node so we can extract inline traces if present.
-        const nodeSnapshot = { name: node.name, status, ...('message' in node ? { message: node.message } : {}), ...('counterExample' in node ? { counterExample: node.counterExample } : {}), ...('counterexample' in node ? { counterexample: node.counterexample } : {}), ...('trace' in node ? { trace: node.trace } : {}), ...('callTrace' in node ? { callTrace: node.callTrace } : {}) };
-        results.push({
-            ruleName: nextPath.join(' > '),
-            status: status,
-            outputFile: null,
-            url: null,
-            nodeSnapshot
-        });
-    }
-
-    for (const child of children) {
-        collectFailedRuleOutputs(child, runInfo, results, nextPath, opts);
-    }
-
-    return results;
 }
 
 // Main endpoint: analyze URL and return all JSON content (with real-time progress)
@@ -287,8 +160,12 @@ app.post('/analyze-and-fetch-stream', async (req, res) => {
             return;
         }
 
-        // Correctly pass empty array as path accumulator to avoid string concat/join errors
-    const failedRules = collectFailedRuleOutputs(progressData, runInfo, [], [], { includeSatisfied, includeRuleMatch, includeAll });
+        // Use getProgressRoots() to unwrap the progress JSON (same as non-streaming endpoint)
+    const roots = getProgressRoots(progressData);
+    const failedRules = [];
+    for (const root of roots) {
+        collectFailedRuleOutputs(root, runInfo, failedRules, [], { includeSatisfied, includeRuleMatch, includeAll });
+    }
     sendProgress(`Found ${failedRules.length} rules to analyze (filtered by includeSatisfied=${Boolean(includeSatisfied)}), fetching JSON content...`);
 
         const results = [];
@@ -321,10 +198,18 @@ app.post('/analyze-and-fetch-stream', async (req, res) => {
 
         await browser.close();
 
+        // P1: Fetch job metadata from output.json
+        sendProgress('Fetching job metadata (output.json)...');
+        const jobMetadata = await fetchJobMetadata(runInfo);
+        if (jobMetadata) {
+            sendProgress(`Job metadata: proverTime=${jobMetadata.proverTime}s, ruleSanity=${jobMetadata.ruleSanity}`, 'info');
+        }
+
         const response = {
             url,
             timestamp: new Date().toISOString(),
             totalRules: failedRules.length,
+            jobMetadata,
             rules: results
         };
 
@@ -414,15 +299,14 @@ app.post('/analyze-and-fetch', async (req, res) => {
 
         console.log(`Found ${sortedRules.length} rules to analyze (VIOLATED and SANITY_FAILED), fetching JSON content...`);
 
-        // Function with retry: until success
+        // Function with retry: max 10 attempts, then give up
+        const MAX_FETCH_RETRIES = 10;
         const fetchJsonWithRetry = async (rule, delayMs = 2000) => {
             let attempt = 0;
-            // Infinite retry until success
-            // Note: Add fixed wait to prevent too fast retry
-            while (true) {
+            while (attempt < MAX_FETCH_RETRIES) {
                 attempt++;
                 try {
-                    console.log(`Fetching ${rule.outputFile} (attempt ${attempt})...`);
+                    console.log(`Fetching ${rule.outputFile} (attempt ${attempt}/${MAX_FETCH_RETRIES})...`);
                     const response = await fetch(rule.url);
                     if (!response.ok) {
                         console.warn(`HTTP ${response.status} failed to fetch ${rule.outputFile}, retrying...`);
@@ -440,6 +324,8 @@ app.post('/analyze-and-fetch', async (req, res) => {
                 // Wait then retry
                 await new Promise(r => setTimeout(r, delayMs));
             }
+            console.error(`Failed to fetch ${rule.outputFile} after ${MAX_FETCH_RETRIES} attempts, giving up.`);
+            return { ...rule, content: null, error: `Failed after ${MAX_FETCH_RETRIES} attempts` };
         };
 
         // Concurrently fetch all JSON file contents (each has its own infinite retry)
@@ -454,12 +340,16 @@ app.post('/analyze-and-fetch', async (req, res) => {
             return fetchJsonWithRetry(rule);
         }));
 
+        // P1: Fetch job metadata from output.json
+        const jobMetadata = await fetchJobMetadata(runInfo);
+
         // Return complete results
         res.json({
             url: url,
             runInfo: runInfo,
             timestamp: new Date().toISOString(),
             totalRules: rulesWithContent.length,
+            jobMetadata,
             rules: rulesWithContent
         });
 
@@ -557,8 +447,6 @@ app.post('/analyze-rule-stream', async (req, res) => {
 
     // Process codex output with timestamp formatting
     const processCodexOutput = (rawOutput) => {
-        // Split by timestamp pattern [YYYY-MM-DDTHH:MM:SS]
-        const timestampPattern = /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\]/g;
         const lines = rawOutput.split('\n');
         let processedOutput = '';
 

@@ -1,0 +1,21 @@
+{
+  "jobStatus": "COMPLETED",
+  "proverTime": 342,
+  "contractName": "VaultHarness",
+  "specFile": "certora/specs/vault.spec",
+  "solcVersion": "0.8.20",
+  "proverVersion": "7.5.0",
+  "conf": {
+    "rule_sanity": "basic",
+    "optimistic_loop": true,
+    "loop_iter": 3
+  },
+  "rules": {
+    "validation_pendingDepositRequest_canIncrease": "SUCCESS",
+    "validation_authEnforcement": {
+      "SUCCESS": ["fulfillDeposit", "fulfillRedeem"],
+      "VIOLATED": ["cancelDeposit"]
+    },
+    "validation_noSideEffect_transfer": "VIOLATED"
+  }
+}

@@ -6,7 +6,7 @@ A comprehensive automation toolkit for Certora Prover verification workflows, fe
 
 Certora Scraper simplifies and automates the Certora Prover verification process by providing:
 - **Automated Data Extraction**: Scrape verification results directly from Certora Prover URLs
-- **AI-Powered Analysis**: Generate detailed analysis reports using Codex integration  
+- **AI-Powered Analysis**: Generate detailed analysis reports using AI integration  
 - **Intelligent Repair System**: Automatically fix CVL and configuration issues with closed-loop error handling
 - **Web-Based Interface**: User-friendly GUI for managing verification workflows
 
@@ -18,7 +18,7 @@ Certora Scraper simplifies and automates the Certora Prover verification process
 - Real-time progress tracking with Server-Sent Events (SSE)
 
 ### 🤖 **AI-Powered Analysis** 
-- Integrated Codex analysis for verification failures
+- Integrated AI analysis for verification failures
 - Streaming analysis results with editable output
 - Batch processing for multiple rules
 
@@ -33,7 +33,6 @@ Certora Scraper simplifies and automates the Certora Prover verification process
 ### Prerequisites
 - Node.js 20 (see `.nvmrc`)
 - Playwright browsers (installed via script)
-- Optional: Codex CLI for AI analysis (`npm i -g @openai/codex`) and `OPENAI_API_KEY` env var
 
 ### Installation
 
@@ -57,12 +56,6 @@ Certora Scraper simplifies and automates the Certora Prover verification process
    - Visit http://localhost:3002/  (served directly by the server), or
    - Open `certora_analyzer.html` file in a browser.
 
-5. **(Optional) Enable AI Analysis**
-   ```bash
-   export OPENAI_API_KEY=sk-...    # Your key
-   npm i -g @openai/codex          # If not installed
-   ```
-
 ## Usage Guide
 
 ### Web Interface Workflow
@@ -78,7 +71,7 @@ Certora Scraper simplifies and automates the Certora Prover verification process
 
 3. **Analyze Results**
    - **Individual Analysis**: Click "Analyze" for specific failed rules
-   - **Batch Analysis**: Use "Codex analyze all rules" for all failed rules
+   - **Batch Analysis**: Use "Analyze all rules" for all failed rules
    - **Edit Results**: Analysis outputs can be directly edited in the interface for fine-tuning
 
 4. **Execute Automated Repairs**
@@ -105,7 +98,7 @@ The backend service exposes several REST endpoints for programmatic access:
 |----------|--------|-------------|
 | `/analyze-and-fetch` | POST | Extract verification data (synchronous) |
 | `/analyze-and-fetch-stream` | POST | Extract verification data with real-time progress (SSE) |
-| `/analyze-rule-stream` | POST | Stream Codex analysis for individual rules (SSE) |
+| `/analyze-rule-stream` | POST | Stream AI analysis for individual rules (SSE) |
 | `/generate-fix-prompt` | POST | Generate repair prompts from analysis results |
 | `/fix-sequential-stream` | POST | Execute sequential repair workflow (SSE) |
 | `/kill-processes` | POST | Terminate all running processes |
@@ -114,7 +107,7 @@ The backend service exposes several REST endpoints for programmatic access:
 | `/resume-state` | GET | Current sequential fix resume info |
 
 ### Run Without API Key
-You can still scrape & generate markdown (the analyze/fix Codex features will simply not work). Don’t click Codex buttons if no key.
+You can still scrape & generate markdown (the analyze/fix AI features will simply not work). Don't click AI analysis buttons if no key.
 
 ## Project Structure
 
@@ -146,7 +139,7 @@ certora-scraper/
 | **Analysis results take too long to appear** | Try manually stopping the current analysis using the "Stop" button, then restart the analysis process. This can resolve stuck or slow analysis tasks. |
 | **Port already in use (3002)** | Stop previous server (`Ctrl+C` in terminal) or kill with `lsof -t -i:3002 | xargs -r kill`. |
 | **No browser pops up** | UI is now served at http://localhost:3002/. Open manually if auto open failed. |
-| **Codex errors / missing key** | Set `OPENAI_API_KEY` env var and ensure `@openai/codex` CLI installed. |
+| **AI analysis errors / missing key** | Set `OPENAI_API_KEY` env var and ensure the AI CLI tool is installed. |
 | **Playwright missing deps** | Re-run: `npm run playwright:install` (installs system dependencies). |
 
 ## VS Code Integration

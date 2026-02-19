@@ -12,7 +12,7 @@
     "lint:fix": "eslint . --ext .js,.mjs --fix",
     "health": "node -e \"import('node-fetch').then(()=>fetch('http://localhost:3002/health').then(r=>r.json()).then(j=>{console.log(j);process.exit(0);}).catch(e=>{console.error(e);process.exit(1);}))\"",
     "ci": "node scripts/certora_auto_server.mjs & SERVER_PID=$!; sleep 3; npm run health; kill $SERVER_PID || true",
-    "test": "echo \"No tests yet\""
+    "test": "node --test test/test_helpers.mjs"
   },
   "keywords": ["certora","playwright","sse","analysis","automation"],
   "author": "",

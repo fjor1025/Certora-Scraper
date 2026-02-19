@@ -927,6 +927,21 @@
         function processData(data) {
             processedRules = [];
 
+            // P1: Display job metadata if available
+            if (data.jobMetadata) {
+                const jm = data.jobMetadata;
+                let metaLines = ['<strong>📋 Job Metadata</strong>'];
+                if (jm.proverTime) metaLines.push(`Prover Time: ${jm.proverTime}s`);
+                if (jm.proverVersion) metaLines.push(`Prover: ${jm.proverVersion}`);
+                if (jm.contractName) metaLines.push(`Contract: ${jm.contractName}`);
+                if (jm.specFile) metaLines.push(`Spec: ${jm.specFile}`);
+                if (jm.solcVersion) metaLines.push(`Solc: ${jm.solcVersion}`);
+                if (jm.ruleSanity !== null && jm.ruleSanity !== undefined) metaLines.push(`Rule Sanity: ${jm.ruleSanity}`);
+                if (jm.rulesSummary) metaLines.push(`Rules: ${jm.rulesSummary.passed} passed, ${jm.rulesSummary.failed} failed / ${jm.rulesSummary.total} total`);
+                if (jm.jobStatus) metaLines.push(`Job Status: ${jm.jobStatus}`);
+                showStatus(metaLines.join('<br>'), 'info');
+            }
+
             // Process all returned rules (show VIOLATED, SANITY_FAILED, VERIFIED, etc.)
             data.rules.forEach((rule, idx) => {
                 const status = (rule.status || '').toUpperCase() || 'UNKNOWN';
@@ -1937,7 +1952,27 @@
             const simplifiedRuleName = rule.ruleName.split('↳')[0].trim();
             let md = `# Certora Trace Analysis\n\n`;
             md += `**Rule:** ${simplifiedRuleName}\n`;
-            md += `**Status:** ${rule.status}\n\n`;
+            md += `**Status:** ${rule.status}\n`;
+
+            // P0: Extract treeViewPath (the full rule > sub-rule hierarchy from the output JSON)
+            if (traceData.treeViewPath) {
+                md += `**TreeView Path:** ${traceData.treeViewPath}\n`;
+            }
+
+            // P0: Extract assertMessage (the exact assertion that failed)
+            if (traceData.assertMessage) {
+                md += `**Assert Message:** ${traceData.assertMessage}\n`;
+            }
+
+            // P0: Extract assertionBreakdown if present
+            if (traceData.assertionBreakdown && typeof traceData.assertionBreakdown === 'object') {
+                md += `**Assertion Breakdown:**\n`;
+                for (const [key, val] of Object.entries(traceData.assertionBreakdown)) {
+                    md += `  - ${key}: ${typeof val === 'object' ? JSON.stringify(val) : val}\n`;
+                }
+            }
+
+            md += `\n`;
 
             // 1. Call Trace (first position)
             if (traceData.callTrace) {
@@ -1955,22 +1990,50 @@
             }
 
             // 3. Global State Diff (third) - compute from Call Trace Global State nodes
-            const globalStateDiff = calculateGlobalStateDiff(traceData.callTrace);
-            if (Object.keys(globalStateDiff).length > 0) {
-                md += `## 🔄 Global State Diff\n\n`;
-                md += renderGlobalStateDiff(globalStateDiff);
+            // P2: Now includes full intermediate state progression, not just first/last
+            const globalStateDiffResult = calculateGlobalStateDiff(traceData.callTrace);
+            if (Object.keys(globalStateDiffResult.diff).length > 0) {
+                md += `## 🔄 Global State Diff (First vs Last)\n\n`;
+                md += renderGlobalStateDiff(globalStateDiffResult.diff);
+            }
+            // P2: Render all intermediate Global State snapshots
+            if (globalStateDiffResult.allStates && globalStateDiffResult.allStates.length > 1) {
+                md += `## 📸 All Global State Snapshots (${globalStateDiffResult.allStates.length} states)\n\n`;
+                globalStateDiffResult.allStates.forEach((state, idx) => {
+                    md += `### State #${idx + 1}\n\n`;
+                    for (const [path, value] of Object.entries(state)) {
+                        md += `- **${path}**: \`${value}\`\n`;
+                    }
+                    md += `\n`;
+                });
             }
 
-            // 4. Call Resolution Warnings (last position)
+            // 4. Call Resolution Warnings (with enriched fields)
             if (traceData.callResolutionWarnings && traceData.callResolutionWarnings.length > 0) {
                 md += `## 🚨 Call Resolution Warnings\n\n`;
                 traceData.callResolutionWarnings.forEach((warning, index) => {
                     md += `### Warning #${index + 1}\n\n`;
                     if (warning.caller) {
-                        md += `**Caller**: ${warning.caller.name || 'Unknown'}\n`;
+                        md += `**Caller**: ${warning.caller.name || 'Unknown'}`;
+                        if (warning.caller.contractName) md += ` (contract: ${warning.caller.contractName})`;
+                        md += `\n`;
                     }
                     if (warning.callee) {
-                        md += `**Callee**: ${warning.callee.name || 'Unknown'}\n`;
+                        md += `**Callee**: ${warning.callee.name || 'Unknown'}`;
+                        if (warning.callee.contractName) md += ` (contract: ${warning.callee.contractName})`;
+                        md += `\n`;
+                    }
+                    // P1: Extract resolution type (HAVOC_ALL, HAVOC_ECF, DISPATCHER, etc.)
+                    if (warning.resolution) {
+                        md += `**Resolution**: ${warning.resolution}\n`;
+                    }
+                    // P1: Extract isCallback flag
+                    if (warning.isCallback !== undefined) {
+                        md += `**Is Callback**: ${warning.isCallback}\n`;
+                    }
+                    // P1: Extract resolvedTo info
+                    if (warning.resolvedTo) {
+                        md += `**Resolved To**: ${typeof warning.resolvedTo === 'object' ? JSON.stringify(warning.resolvedTo) : warning.resolvedTo}\n`;
                     }
                     if (warning.summary) {
                         md += `**Summary**: ${warning.summary}\n`;
@@ -2012,15 +2075,19 @@
 
                     if (arg.value !== undefined) {
                         value = arg.value;
-                        // If multiple representations exist, prefer the more readable one
+                        // P2: If multiple representations exist, always show both (removed arbitrary <1M gate)
                         if (arg.values && arg.values.length > 1) {
                             const decValue = arg.values.find(v => !v.startsWith('0x') && v !== arg.value && !isNaN(v));
-                            if (decValue && parseInt(decValue) < 1000000) {
+                            if (decValue) {
                                 value = `${arg.value} (${decValue})`;
                             }
                         }
                     } else if (arg.values && Array.isArray(arg.values) && arg.values.length > 0) {
                         value = arg.values[0];
+                        // Also show alternative representations
+                        if (arg.values.length > 1) {
+                            value = arg.values.join(' / ');
+                        }
                     }
 
                     messageText = messageText.replace(placeholder, value);
@@ -2033,7 +2100,26 @@
             }
 
             const statusBadge = node.status && node.status.trim() ? ` **[${node.status}]**` : '';
-            md += `${indent}- ${messageText}${statusBadge}\n`;
+
+            // P1: Extract returnValue, reverted, isView flags from call trace nodes
+            let extraAnnotations = '';
+            if (node.returnValue !== undefined && node.returnValue !== null) {
+                extraAnnotations += ` → return: \`${node.returnValue}\``;
+            }
+            if (node.reverted === true) {
+                extraAnnotations += ' **[REVERTED]**';
+            }
+            if (node.isView === true) {
+                extraAnnotations += ' *(view)*';
+            }
+            if (node.isStaticCall === true) {
+                extraAnnotations += ' *(staticcall)*';
+            }
+            if (node.delegateCall === true) {
+                extraAnnotations += ' *(delegatecall)*';
+            }
+
+            md += `${indent}- ${messageText}${statusBadge}${extraAnnotations}\n`;
 
             if (node.childrenList && node.childrenList.length > 0) {
                 node.childrenList.forEach(child => {
@@ -2044,7 +2130,7 @@
             return md;
         }
 
-        // Compute Global State differences - reference implementation  
+        // Compute Global State differences - P2 enhanced: returns diff + all intermediate states
         function calculateGlobalStateDiff(callTrace) {
             const globalStateNodes = [];
 
@@ -2052,12 +2138,15 @@
             collectGlobalStateNodes(callTrace, globalStateNodes);
 
             if (globalStateNodes.length === 0) {
-                return {};
+                return { diff: {}, allStates: [] };
             }
 
-            // Extract first and last Global State states
-            const firstState = extractStateFromGlobalNode(globalStateNodes[0]);
-            const lastState = extractStateFromGlobalNode(globalStateNodes[globalStateNodes.length - 1]);
+            // P2: Extract ALL intermediate states (not just first/last)
+            const allStates = globalStateNodes.map(node => extractStateFromGlobalNode(node));
+
+            // Extract first and last Global State states for the summary diff
+            const firstState = allStates[0];
+            const lastState = allStates[allStates.length - 1];
 
             // Compute differences
             const diff = {};
@@ -2086,7 +2175,7 @@
                 }
             });
 
-            return diff;
+            return { diff, allStates };
         }
 
         // Recursively collect all Global State nodes
@@ -2130,9 +2219,9 @@
                             // Prefer the most readable value
                             let displayValue = arg.value;
                             if (arg.values && arg.values.length > 1) {
-                                // Prefer decimal representation if available
+                                // P2: Always show decimal representation (removed <1M gate)
                                 const decValue = arg.values.find(v => !v.startsWith('0x') && v !== arg.value && !isNaN(v));
-                                if (decValue && parseInt(decValue) < 1000000) {
+                                if (decValue) {
                                     displayValue = `${arg.value} (${decValue})`;
                                 }
                             }
@@ -2229,7 +2318,7 @@
             return md;
         }
 
-        // Render hierarchy from variables array - reference implementation
+        // Render hierarchy from variables array - enhanced with type/isHavoc metadata
         function renderVariablesFromArray(variables) {
             let md = '';
 
@@ -2240,10 +2329,22 @@
                     if (variable.hasOwnProperty('childrenList') && Array.isArray(variable.childrenList) && variable.childrenList.length > 0) {
                         md += renderNestedVariable(variable);
                     } else {
-                        // Simple variable: output name and value
+                        // Simple variable: output name, value, and metadata
                         const name = variable.variableName;
                         const value = variable.hasOwnProperty('value') ? variable.value : 'undefined';
-                        md += `**${name}**: \`${value}\`\n\n`;
+                        let annotation = '';
+                        // P2: Extract type info
+                        if (variable.type) annotation += ` *(${variable.type})*`;
+                        // P2: Extract isHavoc flag
+                        if (variable.isHavoc === true) annotation += ' **[HAVOC]**';
+                        // P2: Show raw/alternative values if present
+                        if (variable.rawValue !== undefined && variable.rawValue !== variable.value) {
+                            annotation += ` (raw: ${variable.rawValue})`;
+                        }
+                        if (variable.values && Array.isArray(variable.values) && variable.values.length > 1) {
+                            annotation += ` [${variable.values.join(', ')}]`;
+                        }
+                        md += `**${name}**: \`${value}\`${annotation}\n\n`;
                     }
                 }
             });
@@ -2251,7 +2352,7 @@
             return md;
         }
 
-        // Handle nested variables - reference implementation
+        // Handle nested variables - enhanced with type/isHavoc metadata
         function renderNestedVariable(variable, parentPath = []) {
             let md = '';
             const currentPath = parentPath.length > 0 ? [...parentPath, variable.variableName] : [variable.variableName];
@@ -2265,10 +2366,19 @@
                     }
                 });
             } else {
-                // Leaf node: output full path and value
+                // Leaf node: output full path, value, and metadata
                 const fullPath = currentPath.join('.');
                 const value = variable.hasOwnProperty('value') ? variable.value : 'undefined';
-                md += `**${fullPath}**: \`${value}\`\n\n`;
+                let annotation = '';
+                if (variable.type) annotation += ` *(${variable.type})*`;
+                if (variable.isHavoc === true) annotation += ' **[HAVOC]**';
+                if (variable.rawValue !== undefined && variable.rawValue !== variable.value) {
+                    annotation += ` (raw: ${variable.rawValue})`;
+                }
+                if (variable.values && Array.isArray(variable.values) && variable.values.length > 1) {
+                    annotation += ` [${variable.values.join(', ')}]`;
+                }
+                md += `**${fullPath}**: \`${value}\`${annotation}\n\n`;
             }
 
             return md;
@@ -2276,7 +2386,7 @@
 
         // Startup tip
         window.addEventListener('DOMContentLoaded', () => {
-            showStatus('Please run server first: cd /Users/pixelpanda/certora-scraper && node scripts/certora_auto_server.mjs', 'info');
+            showStatus('Please run server first: npm start (from the certora-scraper directory)', 'info');
         });
 
         // Close modal by clicking outside
